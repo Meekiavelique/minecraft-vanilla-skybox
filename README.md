@@ -1,6 +1,8 @@
 # Minecraft Vanilla Skybox
 
 [![](https://dcbadge.limes.pink/api/server/INVITE?style=flat)](https://discord.gg/avSH2JTfef)
+my discord server : [https://discord.gg/avSH2JTfef](https://discord.gg/avSH2JTfef)
+
 
 Only supports 1.21.5 and up (plus 25w10a and up for snapshots)!
 
