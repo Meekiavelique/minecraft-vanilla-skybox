@@ -2,10 +2,20 @@
 
 const float PI = 3.141592654;
 
+const vec3 DAY_HORIZON = vec3(0.5, 0.7, 1.0);
+const vec3 DAY_ZENITH = vec3(0.0, 0.4, 0.8);
+const vec3 NIGHT_HORIZON = vec3(0.05, 0.05, 0.15);
+const vec3 NIGHT_ZENITH = vec3(0.0, 0.0, 0.05);
+const vec3 SUNSET_HORIZON = vec3(0.9, 0.5, 0.2);
+const vec3 SUNSET_ZENITH = vec3(0.2, 0.2, 0.5);
+
+const float DAY_START = 0.25;
+const float DAY_END = 0.75;
+const float NIGHT_START = 0.8;
+const float NIGHT_END = 0.2;
+
 uniform sampler2D Sampler0;
-
 uniform vec4 ColorModulator;
-
 uniform mat4 ModelViewMat;
 uniform mat4 ProjMat;
 uniform vec2 ScreenSize;
@@ -19,32 +29,37 @@ in vec4 vertex3;
 
 out vec4 fragColor;
 
-vec2 convertToCubemapUV(vec3 direction) {
-	float l = max(max(abs(direction.x), abs(direction.y)), abs(direction.z));
-	vec3 dir = direction / l;
-	vec3 absDir = abs(dir);
-	
-	vec2 skyboxUV;
-	vec4 backgroundColor;
-	if (absDir.x >= absDir.y && absDir.x > absDir.z) {
-		if (dir.x < 0) {
-			return vec2(0, 0.5) + (dir.zy * vec2(-1, -1) + 1) / 2 / vec2(3, 2);
-		} else {
-			return vec2(2.0 / 3, 0.5) + (-dir.zy * vec2(-1, 1) + 1) / 2 / vec2(3, 2);
-		}
-	} else if (absDir.y >= absDir.z) {
-		if (dir.y > 0) {
-			return vec2(1.0 / 3, 0) + (dir.xz * vec2(1, -1) + 1) / 2 / vec2(3, 2);
-		} else {
-			return vec2(0, 0) + (-dir.xz * vec2(-1, -1) + 1) / 2 / vec2(3, 2);
-		}
-	} else {
-		if (dir.z < 0) {
-			return vec2(1.0 / 3, 0.5) + (-dir.xy * vec2(-1, 1) + 1) / 2 / vec2(3, 2);
-		} else {
-			return vec2(2.0 / 3, 0) + (dir.xy * vec2(-1, -1) + 1) / 2 / vec2(3, 2);
-		}
-	}
+float hash(vec2 p) {
+    p = fract(p * vec2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
+}
+
+float noise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+
+    float a = hash(i);
+    float b = hash(i + vec2(1.0, 0.0));
+    float c = hash(i + vec2(0.0, 1.0));
+    float d = hash(i + vec2(1.0, 1.0));
+
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+float fbm(vec2 p) {
+    float value = 0.0;
+    float amplitude = 0.5;
+    float frequency = 1.0;
+
+    for (int i = 0; i < 3; i++) {
+        value += amplitude * noise(p * frequency);
+        amplitude *= 0.5;
+        frequency *= 2.0;
+    }
+
+    return value;
 }
 
 void main() {
@@ -56,82 +71,70 @@ void main() {
         fragColor = color * ColorModulator;
         return;
     }
-    
+
     if (gl_PrimitiveID >= 1) {
         discard;
     }
 
-    vec3 pos1 = vertex1.xyz / vertex1.w;
-    vec3 pos2 = vertex2.xyz / vertex2.w;
-    vec3 pos3 = vertex3.xyz / vertex3.w;
-    vec3 center = (pos1 + pos3) * 0.5;
-    vec3 pos4 = center + (center - pos1);
+    vec3 center = (vertex1.xyz / vertex1.w + vertex3.xyz / vertex3.w) * 0.5;
 
-    // Remove bobbing from the projection matrix
     mat4 projMat = ProjMat;
     projMat[3].xy = vec2(0.0);
 
-    // Get the fragment position
     vec4 ndcPos = vec4(gl_FragCoord.xy / ScreenSize * 2.0 - 1.0, 0.0, 1.0);
     vec4 temp = inverse(projMat) * ndcPos;
     vec3 viewPos = temp.xyz / temp.w;
-    vec3 playerPos = viewPos * mat3(ModelViewMat);
-    vec3 rayDir = normalize(playerPos);
+    vec3 rayDir = normalize(viewPos * mat3(ModelViewMat));
 
-    // Figure out which cubemaps to use
+    float upFactor = rayDir.y * 0.5 + 0.5;
+
     float currentTime = 1.0 - fract(atan(center.x, center.y) / PI * 0.5 + 0.5);
-    ivec2 texSize = textureSize(Sampler0, 0);
-    ivec2 cubemapSize = ivec2(texSize.x, texSize.x / 3 * 2);
-    int cubemapCount = texSize.y / cubemapSize.y;
-    int sunSize = texSize.y - cubemapCount * (cubemapSize.y + 1);
 
-    vec2 uv = convertToCubemapUV(rayDir);
-    ivec2 relativePixelCoord = ivec2(cubemapSize * uv);
+    bool isDay = currentTime > DAY_START && currentTime < DAY_END;
+    bool isNight = currentTime < NIGHT_END || currentTime > NIGHT_START;
+    bool isSunrise = currentTime >= NIGHT_END && currentTime <= DAY_START;
+    bool isSunset = currentTime >= DAY_END && currentTime <= NIGHT_START;
 
-    fragColor = vec4(1.0, 0.0, 1.0, 1.0);
-    bool found = false;
-    for (int i = 0; i < cubemapCount; i++) {
-        int previousIndex = (i - 1 + cubemapCount) % cubemapCount;
-        int nextIndex = (i + 1) % cubemapCount;
+    vec3 skyColor;
 
-        float startTime = texelFetch(Sampler0, ivec2(0, sunSize + (1 + cubemapSize.y) * i), 0).r;
-        float nextStartTime = texelFetch(Sampler0, ivec2(0, sunSize + (1 + cubemapSize.y) * nextIndex), 0).r;
-        float interpolationEndTime = texelFetch(Sampler0, ivec2(1, sunSize + (1 + cubemapSize.y) * i), 0).r;
+    if (isDay) {
+        skyColor = mix(DAY_HORIZON, DAY_ZENITH, smoothstep(0.0, 1.0, upFactor));
+    } 
+    else if (isNight) {
+        skyColor = mix(NIGHT_HORIZON, NIGHT_ZENITH, smoothstep(0.0, 1.0, upFactor));
 
-        if (nextStartTime < startTime) {
-            nextStartTime += 1.0;
+        vec2 noiseUV = vec2(atan(rayDir.z, rayDir.x), asin(rayDir.y)) * 20.0;
+        float noise = fbm(noiseUV);
+        if (noise > 0.97) {
+            skyColor += vec3(0.6, 0.7, 0.8) * smoothstep(0.97, 0.99, noise);
         }
-        if (currentTime < startTime || currentTime > nextStartTime) {
-            continue;
-        }
+    } 
+    else if (isSunrise) {
+        float t = (currentTime - NIGHT_END) / (DAY_START - NIGHT_END);
 
-        found = true;
-        vec3 previousValue = texelFetch(Sampler0, ivec2(0, sunSize + (1 + cubemapSize.y) * previousIndex + 1) + relativePixelCoord, 0).rgb;
-        vec3 currentValue = texelFetch(Sampler0, ivec2(0, sunSize + (1 + cubemapSize.y) * i + 1) + relativePixelCoord, 0).rgb;
-        fragColor.rgb = mix(previousValue, currentValue, clamp((currentTime - startTime) / (interpolationEndTime - startTime), 0.0, 1.0));
+        vec3 sunriseHorizon = mix(vec3(1.0, 0.5, 0.1), vec3(1.0, 0.7, 0.3), t);
+        vec3 sunriseZenith = mix(NIGHT_ZENITH, DAY_ZENITH, t * t);
+
+        float horizonFactor = pow(1.0 - upFactor, 4.0);
+        skyColor = mix(sunriseZenith, sunriseHorizon, horizonFactor);
+    } 
+    else { 
+        float t = (currentTime - DAY_END) / (NIGHT_START - DAY_END);
+
+        vec3 sunsetHorizon = mix(vec3(1.0, 0.6, 0.2), vec3(0.9, 0.3, 0.1), t);
+        vec3 sunsetZenith = mix(DAY_ZENITH, NIGHT_ZENITH, t * t);
+
+        float horizonFactor = pow(1.0 - upFactor, 4.0);
+        skyColor = mix(sunsetZenith, sunsetHorizon, horizonFactor);
     }
 
-    if (!found) {
-        // We're before the first start time, we should use the last cubemap for this
-        fragColor.rgb = texelFetch(Sampler0, ivec2(0, sunSize + (1 + cubemapSize.y) * (cubemapCount - 1) + 1) + relativePixelCoord, 0).rgb;
-    }
+    float rayleighFactor = 1.0 - pow(rayDir.y * 0.5 + 0.5, 3.0);
+    vec3 rayleighColor = vec3(0.1, 0.2, 0.4);
+    skyColor = mix(skyColor, rayleighColor, rayleighFactor * 0.2);
 
-    // Raytrace the original sun
-    vec3 normal = normalize(cross(pos1 - pos2, pos3 - pos2));
-    // Ray-Plane intersection
-    float t = dot(center, normal) / dot(rayDir, normal);
-    if (t > 0.0) {
-        vec3 hitPos = rayDir * t;
-        vec3 sideX = pos3 - pos2;
-        vec3 sideY = pos1 - pos2;
-        vec2 uv = vec2(
-            dot(hitPos - pos2, sideX) / dot(sideX, sideX),
-            dot(hitPos - pos2, sideY) / dot(sideY, sideY)
-        );
-        if (clamp(uv, 0.0, 1.0) == uv) {
-            // Draw the sun
-            fragColor.rgb += texelFetch(Sampler0, ivec2(uv * sunSize), 0).rgb;
-        }
-    }
+    vec2 cloudUV = vec2(rayDir.x * 0.1 + currentTime * 0.01, rayDir.z * 0.1);
+    float cloud = fbm(cloudUV) * max(0.0, rayDir.y + 0.1) * 0.1;
+    skyColor = mix(skyColor, vec3(1.0), cloud);
 
+    fragColor = vec4(skyColor, 1.0);
 }
