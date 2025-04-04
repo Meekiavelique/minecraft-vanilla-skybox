@@ -1,6 +1,7 @@
 # Minecraft Vanilla Skybox
 
 [![](https://dcbadge.limes.pink/api/server/INVITE?style=flat)](https://discord.gg/avSH2JTfef)
+
 my discord server : [https://discord.gg/avSH2JTfef](https://discord.gg/avSH2JTfef)
 
 
