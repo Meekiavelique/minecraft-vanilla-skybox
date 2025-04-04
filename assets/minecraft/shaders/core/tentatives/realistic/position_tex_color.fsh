@@ -1,4 +1,5 @@
 // Atmospheric Scattering Sky
+// Break when running because of the view bobbing
 // https://www.scratchapixel.com/lessons/procedural-generation-virtual-worlds/simulating-sky/simulating-colors-of-the-sky.html
 // https://github.com/wwwtyro/glsl-atmosphere
 
